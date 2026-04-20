@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,10 +21,13 @@ type Repository interface {
 	GetByID(ctx context.Context, id string) (*Recording, error)
 	ExistsByObjectKey(ctx context.Context, objectKey string) (bool, error)
 	Create(ctx context.Context, rec *Recording) error
+	UpsertStreamMetadata(ctx context.Context, md *StreamMetadata) error
+	GetStreamMetadata(ctx context.Context, streamKey string) (*StreamMetadata, error)
 }
 
 type ObjectStorage interface {
 	UploadFile(ctx context.Context, objectKey, absolutePath string) (string, error)
+	OpenRead(ctx context.Context, objectKey string) (io.ReadCloser, string, int64, error)
 }
 
 type Service struct {
@@ -50,6 +54,37 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Recording, err
 
 func (s *Service) GetByID(ctx context.Context, id string) (*Recording, error) {
 	return s.repo.GetByID(ctx, id)
+}
+
+func (s *Service) OpenPlaybackByID(ctx context.Context, id string) (*Recording, io.ReadCloser, string, int64, error) {
+	row, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, nil, "", 0, err
+	}
+	body, contentType, size, err := s.objectStorage.OpenRead(ctx, row.ObjectKey)
+	if err != nil {
+		return nil, nil, "", 0, err
+	}
+	return row, body, contentType, size, nil
+}
+
+func (s *Service) RegisterStreamMetadata(ctx context.Context, streamKey, title, description, instructorName string) error {
+	streamKey = strings.TrimSpace(streamKey)
+	if streamKey == "" {
+		return fmt.Errorf("streamKey is required")
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "Transmision"
+	}
+	if strings.TrimSpace(instructorName) == "" {
+		instructorName = "Profesor"
+	}
+	return s.repo.UpsertStreamMetadata(ctx, &StreamMetadata{
+		StreamKey:      streamKey,
+		Title:          title,
+		Description:    description,
+		InstructorName: instructorName,
+	})
 }
 
 func (s *Service) Reconcile(ctx context.Context) (int, error) {
@@ -139,6 +174,11 @@ func (s *Service) tryProcessFile(ctx context.Context, absolutePath string) (bool
 		PlaybackURL:    playbackURL,
 		Status:         StatusReady,
 	}
+	if md, err := s.repo.GetStreamMetadata(ctx, rec.StreamKey); err == nil {
+		rec.Title = md.Title
+		rec.Description = md.Description
+		rec.InstructorName = md.InstructorName
+	}
 	if err := s.repo.Create(ctx, rec); err != nil {
 		return false, err
 	}
@@ -151,7 +191,10 @@ func IsNotFound(err error) bool {
 
 func deriveStreamKey(objectKey string) string {
 	parts := strings.Split(objectKey, "/")
-	if len(parts) > 1 && parts[0] != "" {
+	if len(parts) > 1 && parts[0] == "live" && parts[1] != "" {
+		return parts[1]
+	}
+	if len(parts) > 0 && parts[0] != "" {
 		return parts[0]
 	}
 	return "unknown"

@@ -3,6 +3,7 @@ package object
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ type Client struct {
 	bucket        string
 	publicBaseURL string
 	region        string
+	s3            *s3.Client
 	uploader      *manager.Uploader
 }
 
@@ -56,6 +58,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		bucket:        cfg.Bucket,
 		region:        cfg.Region,
 		publicBaseURL: strings.TrimSuffix(cfg.PublicBaseURL, "/"),
+		s3:            client,
 		uploader:      manager.NewUploader(client),
 	}, nil
 }
@@ -83,4 +86,23 @@ func (c *Client) ObjectURL(objectKey string) string {
 		return fmt.Sprintf("%s/%s", c.publicBaseURL, url.PathEscape(objectKey))
 	}
 	return fmt.Sprintf("s3://%s/%s", c.bucket, filepath.ToSlash(objectKey))
+}
+
+func (c *Client) OpenRead(ctx context.Context, objectKey string) (io.ReadCloser, string, int64, error) {
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(objectKey),
+	})
+	if err != nil {
+		return nil, "", 0, err
+	}
+	contentType := "application/octet-stream"
+	if out.ContentType != nil && *out.ContentType != "" {
+		contentType = *out.ContentType
+	}
+	var size int64
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	return out.Body, contentType, size, nil
 }

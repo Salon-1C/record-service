@@ -25,6 +25,15 @@ type Recording struct {
 	CreatedAt      time.Time       `gorm:"autoCreateTime" json:"createdAt"`
 }
 
+type StreamMetadata struct {
+	StreamKey      string    `gorm:"primaryKey;size:128" json:"streamKey"`
+	Title          string    `gorm:"size:255;not null" json:"title"`
+	Description    string    `gorm:"type:text" json:"description"`
+	InstructorName string    `gorm:"size:255;not null" json:"instructorName"`
+	CreatedAt      time.Time `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt      time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
+}
+
 type ListResponse struct {
 	Recordings []Recording `json:"recordings"`
 	Count      int         `json:"count"`

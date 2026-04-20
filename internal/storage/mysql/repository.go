@@ -20,6 +20,9 @@ func New(dsn string) (*Repository, error) {
 	if err := db.AutoMigrate(&recordings.Recording{}); err != nil {
 		return nil, err
 	}
+	if err := db.AutoMigrate(&recordings.StreamMetadata{}); err != nil {
+		return nil, err
+	}
 	return &Repository{db: db}, nil
 }
 
@@ -53,4 +56,16 @@ func (r *Repository) ExistsByObjectKey(ctx context.Context, objectKey string) (b
 
 func (r *Repository) Create(ctx context.Context, rec *recordings.Recording) error {
 	return r.db.WithContext(ctx).Create(rec).Error
+}
+
+func (r *Repository) UpsertStreamMetadata(ctx context.Context, md *recordings.StreamMetadata) error {
+	return r.db.WithContext(ctx).Save(md).Error
+}
+
+func (r *Repository) GetStreamMetadata(ctx context.Context, streamKey string) (*recordings.StreamMetadata, error) {
+	var row recordings.StreamMetadata
+	if err := r.db.WithContext(ctx).First(&row, "stream_key = ?", streamKey).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
 }
