@@ -1,6 +1,7 @@
 package object
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -74,6 +75,19 @@ func (c *Client) UploadFile(ctx context.Context, objectKey, absolutePath string)
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(objectKey),
 		Body:   file,
+	})
+	if err != nil {
+		return "", err
+	}
+	return c.ObjectURL(objectKey), nil
+}
+
+func (c *Client) UploadBytes(ctx context.Context, objectKey string, content []byte, contentType string) (string, error) {
+	_, err := c.uploader.Upload(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(objectKey),
+		Body:        bytes.NewReader(content),
+		ContentType: aws.String(contentType),
 	})
 	if err != nil {
 		return "", err

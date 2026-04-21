@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Salon-1C/record-service/internal/recordings"
 )
@@ -110,11 +112,15 @@ func (h *Handler) handlePlayRecording(w http.ResponseWriter, r *http.Request, id
 		}
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename*=UTF-8''%s", disposition, url.PathEscape(filename)))
-	if size > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	data, err := io.ReadAll(body)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"message": "failed to read object body"})
+		return
 	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, body)
+	if size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(int64(len(data)), 10))
+	}
+	http.ServeContent(w, r, filename, time.Time{}, bytes.NewReader(data))
 }
 
 func (h *Handler) handleReconcile(w http.ResponseWriter, r *http.Request) {

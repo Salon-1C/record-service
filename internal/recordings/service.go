@@ -2,6 +2,7 @@ package recordings
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ type Repository interface {
 
 type ObjectStorage interface {
 	UploadFile(ctx context.Context, objectKey, absolutePath string) (string, error)
+	UploadBytes(ctx context.Context, objectKey string, content []byte, contentType string) (string, error)
 	OpenRead(ctx context.Context, objectKey string) (io.ReadCloser, string, int64, error)
 }
 
@@ -85,6 +87,52 @@ func (s *Service) RegisterStreamMetadata(ctx context.Context, streamKey, title, 
 		Description:    description,
 		InstructorName: instructorName,
 	})
+}
+
+func (s *Service) ProcessQueuedSegment(ctx context.Context, streamPath, segmentPath, contentBase64 string) error {
+	if streamPath == "" || segmentPath == "" || contentBase64 == "" {
+		return fmt.Errorf("streamPath, segmentPath and contentBase64 are required")
+	}
+	data, err := base64.StdEncoding.DecodeString(contentBase64)
+	if err != nil {
+		return fmt.Errorf("invalid base64 payload: %w", err)
+	}
+	objectKey := filepath.ToSlash(strings.TrimPrefix(segmentPath, "/recordings/"))
+	if objectKey == "" || objectKey == "." {
+		objectKey = filepath.ToSlash(strings.TrimPrefix(segmentPath, "/"))
+	}
+	exists, err := s.repo.ExistsByObjectKey(ctx, objectKey)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	playbackURL, err := s.objectStorage.UploadBytes(ctx, objectKey, data, "video/mp4")
+	if err != nil {
+		return err
+	}
+	startedAt := deriveStartedAt(objectKey, time.Now().UTC())
+	durationSec := int64(0)
+	rec := &Recording{
+		ID:             uuid.NewString(),
+		StreamKey:      deriveStreamKey(objectKey),
+		Title:          deriveTitle(objectKey),
+		Description:    "Grabacion procesada asincronamente desde cola.",
+		InstructorName: "Profesor",
+		StartedAt:      startedAt,
+		EndedAt:        startedAt,
+		DurationSec:    durationSec,
+		ObjectKey:      objectKey,
+		PlaybackURL:    playbackURL,
+		Status:         StatusReady,
+	}
+	if md, err := s.repo.GetStreamMetadata(ctx, rec.StreamKey); err == nil {
+		rec.Title = md.Title
+		rec.Description = md.Description
+		rec.InstructorName = md.InstructorName
+	}
+	return s.repo.Create(ctx, rec)
 }
 
 func (s *Service) Reconcile(ctx context.Context) (int, error) {
@@ -160,6 +208,12 @@ func (s *Service) tryProcessFile(ctx context.Context, absolutePath string) (bool
 	if err != nil {
 		return false, err
 	}
+	startedAt := deriveStartedAt(objectKey, info.ModTime())
+	endedAt := info.ModTime()
+	durationSec := int64(endedAt.Sub(startedAt).Seconds())
+	if durationSec < 0 {
+		durationSec = 0
+	}
 
 	rec := &Recording{
 		ID:             uuid.NewString(),
@@ -167,9 +221,9 @@ func (s *Service) tryProcessFile(ctx context.Context, absolutePath string) (bool
 		Title:          deriveTitle(objectKey),
 		Description:    "Grabacion procesada automaticamente desde MediaMTX.",
 		InstructorName: "Profesor",
-		StartedAt:      info.ModTime(),
-		EndedAt:        info.ModTime(),
-		DurationSec:    0,
+		StartedAt:      startedAt,
+		EndedAt:        endedAt,
+		DurationSec:    durationSec,
 		ObjectKey:      objectKey,
 		PlaybackURL:    playbackURL,
 		Status:         StatusReady,
@@ -203,4 +257,14 @@ func deriveStreamKey(objectKey string) string {
 func deriveTitle(objectKey string) string {
 	base := filepath.Base(objectKey)
 	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+func deriveStartedAt(objectKey string, fallback time.Time) time.Time {
+	base := filepath.Base(objectKey)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	ts, err := time.ParseInLocation("2006-01-02_15-04-05", base, fallback.Location())
+	if err != nil {
+		return fallback
+	}
+	return ts
 }

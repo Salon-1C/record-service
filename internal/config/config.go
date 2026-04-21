@@ -28,6 +28,8 @@ type Config struct {
 	ScanInterval       time.Duration
 	StableWindow       time.Duration
 	MaxUploadFileBytes int64
+	RabbitMQURL        string
+	RabbitMQQueue      string
 }
 
 func Load() (Config, error) {
@@ -49,6 +51,8 @@ func Load() (Config, error) {
 		ScanInterval:       getEnvAsDuration("SCAN_INTERVAL", 10*time.Second),
 		StableWindow:       getEnvAsDuration("STABLE_WINDOW", 20*time.Second),
 		MaxUploadFileBytes: getEnvAsInt64("MAX_UPLOAD_FILE_BYTES", 5*1024*1024*1024),
+		RabbitMQURL:        os.Getenv("RABBITMQ_URL"),
+		RabbitMQQueue:      getEnv("RABBITMQ_QUEUE", "recordings.ready"),
 	}
 
 	if cfg.DBPassword == "" {

@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	conf "github.com/Salon-1C/record-service/internal/config"
 	httpapi "github.com/Salon-1C/record-service/internal/http"
+	"github.com/Salon-1C/record-service/internal/queue"
 	"github.com/Salon-1C/record-service/internal/recordings"
 	mysqlstore "github.com/Salon-1C/record-service/internal/storage/mysql"
 	objectstore "github.com/Salon-1C/record-service/internal/storage/object"
@@ -41,7 +43,18 @@ func main() {
 	svc := recordings.NewService(repo, obj, cfg.RecordingsDir, cfg.StableWindow, cfg.MaxUploadFileBytes)
 	router := httpapi.NewHandler(svc)
 
-	go startReconcileLoop(svc, cfg.ScanInterval)
+	if _, err := os.Stat(cfg.RecordingsDir); err == nil {
+		go startReconcileLoop(svc, cfg.ScanInterval)
+	} else {
+		log.Printf("reconcile loop skipped: recordings dir %q is not mounted", cfg.RecordingsDir)
+	}
+	if cfg.RabbitMQURL != "" {
+		if err := queue.StartConsumer(context.Background(), cfg.RabbitMQURL, cfg.RabbitMQQueue, svc); err != nil {
+			log.Printf("rabbitmq consumer disabled: %v", err)
+		} else {
+			log.Printf("rabbitmq consumer enabled on queue %q", cfg.RabbitMQQueue)
+		}
+	}
 
 	log.Printf("record-service listening on %s", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, router.Routes()); err != nil {
